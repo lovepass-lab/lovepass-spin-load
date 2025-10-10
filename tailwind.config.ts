@@ -80,10 +80,31 @@ export default {
             height: "0",
           },
         },
+        "spin-slow": {
+          from: {
+            transform: "rotate(0deg)",
+          },
+          to: {
+            transform: "rotate(360deg)",
+          },
+        },
+        "progress": {
+          "0%": {
+            width: "0%",
+          },
+          "100%": {
+            width: "100%",
+          },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "spin-slow": "spin-slow 3s linear infinite",
+        "progress": "progress 2s ease-in-out infinite",
+      },
+      backgroundImage: {
+        "gradient-lovepass": "var(--gradient-lovepass)",
       },
     },
   },

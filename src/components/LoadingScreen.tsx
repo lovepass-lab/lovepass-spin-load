@@ -31,7 +31,7 @@ const LoadingScreen = () => {
             <img
               src={lovepassHeart}
               alt="Lovepass Heart"
-              className="h-24 w-24 animate-spin-slow"
+              className="h-16 w-16 animate-spin-slow"
             />
           </div>
           

@@ -1,73 +1,90 @@
-# Welcome to your Lovable project
+# Lovepass Gold Contract + Tests + Readme
 
-## Project info
+Ethereum subscription contract for Lovepass Gold. Solidity 0.8.x using OpenZeppelin Ownable, Pausable, ReentrancyGuard.
 
-**URL**: https://lovable.dev/projects/8022b13a-f667-413a-bb25-959fb726db36
+## Features
+- ETH subscription: `subscribe(uint8 months)` and `renew(uint8 months)` extend `expiry` (30 days per month), `tier=1`.
+- Read helper: `isActive(address)` returns `(bool active, uint64 expiry, uint8 tier, bool revoked)`.
+- Admin: `grant`, `grantBatch`, `revoke`, `unrevoke`.
+- Admin knobs: price, treasury, operator, grace, pause/unpause.
+- Payments accumulate in contract. `withdraw()` pushes to `treasury`.
+- Events for all state changes.
 
-## How can I edit this code?
-
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/8022b13a-f667-413a-bb25-959fb726db36) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+## Setup
+```bash
+npm install
+cp .env.sample .env
+# fill in RPC URLs, PRIVATE_KEY, TREASURY, OPERATOR
 ```
 
-**Edit a file directly in GitHub**
+## Build & Test
+```bash
+npm run build
+npm test
+```
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Deploy
+```bash
+# Sepolia
+npm run deploy:sepolia
+# Mainnet
+npm run deploy:mainnet
+```
 
-**Use GitHub Codespaces**
+Environment variables used by `scripts/deploy.js`:
+- `PRICE_WEI_PER_30D`
+- `TREASURY`
+- `OPERATOR`
+- `GRACE_SECONDS`
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Contract
+Path: `contracts/LovepassGold.sol`
 
-## What technologies are used for this project?
+Constructor:
+```solidity
+constructor(uint256 priceWeiPer30d, address payable treasury, address operator, uint64 graceSeconds)
+```
 
-This project is built with:
+Helper:
+```solidity
+function isActive(address user) view returns (bool active, uint64 expiry, uint8 tier, bool revoked)
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+ABI snippet for `isActive`:
+```json
+[
+  {
+    "inputs": [{"internalType":"address","name":"user","type":"address"}],
+    "name":"isActive",
+    "outputs": [
+      {"internalType":"bool","name":"active","type":"bool"},
+      {"internalType":"uint64","name":"expiry","type":"uint64"},
+      {"internalType":"uint8","name":"tier","type":"uint8"},
+      {"internalType":"bool","name":"revoked","type":"bool"}
+    ],
+    "stateMutability":"view",
+    "type":"function"
+  }
+]
+```
 
-## How can I deploy this project?
+Example ethers.js call:
+```js
+import { ethers } from "ethers";
+const provider = new ethers.JsonRpcProvider(process.env.MAINNET_RPC_URL);
+const abi = ["function isActive(address) view returns (bool,uint64,uint8,bool)"];
+const contract = new ethers.Contract("0xYourContractAddress", abi, provider);
+const [active, expiry, tier, revoked] = await contract.isActive("0xUserAddress");
+```
 
-Simply open [Lovable](https://lovable.dev/projects/8022b13a-f667-413a-bb25-959fb726db36) and click on Share -> Publish.
+## ENS wiring
+Point `upgrade.lovepass.eth` to the deployed contract address.
+Your docs should say:
+- "Send exactly X ETH to upgrade.lovepass.eth for 30 days. Send 2× for 60 days, etc."
 
-## Can I connect a custom domain to my Lovable project?
+Note: direct ETH transfers to the contract do not auto-subscribe; users must call `subscribe(months)` (or use a forwarding/pay contract if desired).
 
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## Notes
+- Time math uses `30 days` Solidity literal (equivalent to 30*24*60*60).
+- Rounding: if `msg.value` is slightly more than required, extra is kept as dust.
+- Upgradability: v1 is immutable; deploy v2 later if needed.

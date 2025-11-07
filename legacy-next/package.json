@@ -10,6 +10,10 @@
   "dependencies": {
     "next": "^14.2.10",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "ethers": "^6.11.1",
+    "content-hash": "^2.5.2",
+    "pg": "^8.11.3",
+    "better-sqlite3": "^9.4.3"
   }
 }

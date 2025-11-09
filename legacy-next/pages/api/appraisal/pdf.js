@@ -51,8 +51,8 @@ export default async function handler(req, res) {
     const data = await r.json();
 
     const pdf = await PDFDocument.create();
-    const page = pdf.addPage([612, 792]); // Letter portrait
-    const bold = await pdf.embedFont(StandardFonts.Helvetica-Bold);
+    let page = pdf.addPage([612, 792]); // Letter portrait
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
     const regular = await pdf.embedFont(StandardFonts.Helvetica);
 
     const pink = rgb(0.98, 0.14, 0.62);
@@ -99,12 +99,10 @@ export default async function handler(req, res) {
       const lines = wrapText(`• ${s}`, regular, size, maxWidth);
       for (const ln of lines) {
         if (y - size < margin + 40) {
-          const newPage = pdf.addPage([612, 792]);
+          page = pdf.addPage([612, 792]);
           y = 792 - margin;
-          newPage.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
+          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
           y -= 12 + 14;
-          // switch to new page
-          page.setRotation(page.getRotation()); // noop just to reference page
         }
         page.drawText(ln, { x: margin, y: y - size, size, font: regular, color: rgb(0.1,0.1,0.1) });
         y -= size + lineGap;
@@ -125,9 +123,9 @@ export default async function handler(req, res) {
       const lines = wrapText(`• ${s}`, regular, size, maxWidth);
       for (const ln of lines) {
         if (y - size < margin + 40) {
-          const newPage = pdf.addPage([612, 792]);
+          page = pdf.addPage([612, 792]);
           y = 792 - margin;
-          newPage.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
+          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
           y -= 12 + 14;
         }
         page.drawText(ln, { x: margin, y: y - size, size, font: regular, color: rgb(0.1,0.1,0.1) });

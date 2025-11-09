@@ -1,3 +1,4 @@
+import OpenAI from 'openai';
 // legacy-next/pages/api/appraisal.js
  
 // super-light ENS-ish appraisal endpoint for Lovepass
@@ -94,6 +95,61 @@ function ideasFor(name) {
   return ideas;
 }
 
+// --- v2 deterministic helpers (numbers only; no AI) ---
+function analyzeNameV2(raw) {
+  const label = String(raw || '').toLowerCase().replace(/\.eth$/, '');
+  return {
+    label,
+    len: label.length,
+    hasDigits: /\d/.test(label),
+    hasHyphen: /-/.test(label),
+    isCleanWord: /^[a-z]+$/.test(label)
+  };
+}
+
+function scoreV2(name) {
+  const m = analyzeNameV2(name);
+  let score = 10; // baseline
+  if (m.len <= 3) score += 50;
+  else if (m.len === 4) score += 40;
+  else if (m.len <= 6) score += 30;
+  else if (m.len <= 10) score += 20;
+  else score += 10;
+  if (m.hasDigits) score -= 8;
+  if (m.hasHyphen) score -= 12;
+  if (m.isCleanWord) score += 5; else score -= 5;
+  if (score < 0) score = 0;
+  if (score > 100) score = 100;
+  return { score, meta: m };
+}
+
+function priceFromScoreV2(score, isMainnet) {
+  // 80–100 → ~$25k, 60–79 → ~$10k, 40–59 → ~$3.5k, 20–39 → ~$500, 0–19 → ~$75
+  const baseUsd =
+    score >= 80 ? 25000 :
+    score >= 60 ? 10000 :
+    score >= 40 ? 3500  :
+    score >= 20 ? 500   :
+    75;
+  const mult = isMainnet ? MAINNET_MULTIPLIER : TESTNET_MULTIPLIER;
+  return Math.round(baseUsd * mult);
+}
+
+function defaultTextV2(name, score, isMainnet, meta) {
+  const signals = [
+    `Name analyzed: ${name}`,
+    `Length: ${meta.len} (${meta.isCleanWord ? 'clean word' : 'mixed characters'})`,
+    `Digits: ${meta.hasDigits ? 'yes' : 'no'} • Hyphen: ${meta.hasHyphen ? 'yes' : 'no'}`,
+    isMainnet ? 'Network: Mainnet (higher commercial intent)' : 'Network: Testnet / off-market (conservative)'
+  ];
+  const suggestions = [
+    `Create an onchain profile at app.ens.domains for ${name}.`,
+    `Publish a simple site for ${name} (IPFS/ENS) explaining purpose.`,
+    `Showcase ${name} in your Lovepass extension.`
+  ];
+  return { signals, suggestions };
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -108,19 +164,61 @@ export default async function handler(req, res) {
     }
 
     const isMainnet = net === 'mainnet' || net === '1';
-    const score = baseScoreFromName(name);
-    const usd = priceFromScore(score, isMainnet);
+    const networkStr = isMainnet ? 'mainnet' : (net || 'sepolia');
+    const { score, meta } = scoreV2(name);
+    const usd = priceFromScoreV2(score, isMainnet);
+    const confidence = score >= 70 ? 'high' : score >= 35 ? 'medium' : 'low';
+
+    // Default text (no AI)
+    let { signals, suggestions } = defaultTextV2(name, score, isMainnet, meta);
+    let source = 'lovepass-appraisal-v2-fallback';
+
+    // Optional AI: generate text only (keep numbers deterministic)
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey) {
+      try {
+        const openai = new OpenAI({ apiKey });
+        const payload = {
+          name,
+          network: networkStr,
+          score,
+          appraisalUsd: usd,
+          hasDigits: meta.hasDigits,
+          hasHyphen: meta.hasHyphen,
+          isShortWord: meta.len <= 6,
+          lengthCategory: meta.len <= 3 ? 'very_short' : meta.len <= 4 ? 'short' : meta.len <= 6 ? 'medium' : meta.len <= 10 ? 'long' : 'very_long',
+          networkBonusApplied: isMainnet,
+        };
+        const r = await openai.chat.completions.create({
+          model: 'gpt-4.1-mini',
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: 'You generate short, clear explanations for ENS name appraisals. Reply with JSON only: {"signals": string[], "suggestions": string[]}. Do not change numbers.' },
+            { role: 'user', content: JSON.stringify(payload) }
+          ]
+        });
+        const content = r?.choices?.[0]?.message?.content || '{}';
+        const obj = JSON.parse(content);
+        if (Array.isArray(obj?.signals) && Array.isArray(obj?.suggestions)) {
+          signals = obj.signals.map(String);
+          suggestions = obj.suggestions.map(String);
+          source = 'lovepass-appraisal-v2-ai';
+        }
+      } catch (e) {
+        // fall back silently
+      }
+    }
 
     res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=60");
     return res.status(200).json({
       name,
-      network: isMainnet ? 'mainnet' : (net || 'sepolia'),
+      network: networkStr,
       appraisalUsd: usd,
-      confidence: score >= 70 ? 'high' : score >= 50 ? 'medium' : 'low',
+      confidence,
       score,
-      signals: signalsFor(name, score, isMainnet),
-      suggestions: ideasFor(name),
-      source: 'lovepass-appraisal-v1'
+      signals,
+      suggestions,
+      source
     });
   } catch (e) {
     console.error('appraisal error', e);

@@ -52,8 +52,10 @@ export default async function handler(req, res) {
 
     const pdf = await PDFDocument.create();
     let page = pdf.addPage([612, 792]); // Letter portrait
-    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-    const regular = await pdf.embedFont(StandardFonts.Helvetica);
+    const regularFont = await pdf.embedFont(StandardFonts.Helvetica);
+    console.log('[pdf] embedded Helvetica regular');
+    const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
+    console.log('[pdf] embedded HelveticaBold');
 
     const pink = rgb(0.98, 0.14, 0.62);
     const gray = grayscale(0.6);
@@ -66,45 +68,45 @@ export default async function handler(req, res) {
     // Title
     const title = 'Lovepass Domain Appraisal';
     let size = 22;
-    page.drawText(title, { x: margin, y: y - size, size, font: bold, color: rgb(0,0,0) });
+    page.drawText(title, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
     y -= size + 16;
 
     // Name + network
     const tag = `${data.name || name} • ${(data.network || net).toUpperCase()}`;
     size = 14;
-    page.drawText(tag, { x: margin, y: y - size, size, font: regular, color: rgb(0.1,0.1,0.1) });
+    page.drawText(tag, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
     y -= size + 18;
 
     // Estimated value
     const value = `Estimated Value: ${fmtUsd(data.appraisalUsd)}`;
     size = 28;
-    page.drawText(value, { x: margin, y: y - size, size, font: bold, color: pink });
+    page.drawText(value, { x: margin, y: y - size, size, font: boldFont, color: pink });
     y -= size + 14;
 
     // Confidence + score
     const meta = `${(data.confidence || '').charAt(0).toUpperCase() + (data.confidence || '').slice(1)} confidence • ${data.score ?? '?'} / 100`;
     size = 12;
-    page.drawText(meta, { x: margin, y: y - size, size, font: regular, color: rgb(0.2,0.2,0.2) });
+    page.drawText(meta, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.2,0.2,0.2) });
     y -= size + 22;
 
     // Section: Why this has value
     const h1 = 'Why This Has Value';
     size = 16;
-    page.drawText(h1, { x: margin, y: y - size, size, font: bold, color: rgb(0,0,0) });
+    page.drawText(h1, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
     y -= size + 10;
 
     const signals = Array.isArray(data.signals) ? data.signals : [];
     size = 11;
     for (const s of signals) {
-      const lines = wrapText(`• ${s}`, regular, size, maxWidth);
+      const lines = wrapText(`• ${s}`, regularFont, size, maxWidth);
       for (const ln of lines) {
         if (y - size < margin + 40) {
           page = pdf.addPage([612, 792]);
           y = 792 - margin;
-          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
+          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: boldFont, color: gray });
           y -= 12 + 14;
         }
-        page.drawText(ln, { x: margin, y: y - size, size, font: regular, color: rgb(0.1,0.1,0.1) });
+        page.drawText(ln, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
         y -= size + lineGap;
       }
     }
@@ -114,28 +116,28 @@ export default async function handler(req, res) {
     // Section: What to do next
     const h2 = 'What To Do Next';
     size = 16;
-    page.drawText(h2, { x: margin, y: y - size, size, font: bold, color: rgb(0,0,0) });
+    page.drawText(h2, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
     y -= size + 10;
 
     const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     size = 11;
     for (const s of suggestions) {
-      const lines = wrapText(`• ${s}`, regular, size, maxWidth);
+      const lines = wrapText(`• ${s}`, regularFont, size, maxWidth);
       for (const ln of lines) {
         if (y - size < margin + 40) {
           page = pdf.addPage([612, 792]);
           y = 792 - margin;
-          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: bold, color: gray });
+          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: boldFont, color: gray });
           y -= 12 + 14;
         }
-        page.drawText(ln, { x: margin, y: y - size, size, font: regular, color: rgb(0.1,0.1,0.1) });
+        page.drawText(ln, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
         y -= size + lineGap;
       }
     }
 
     // Footer
     const footer = 'Powered by Lovepass Labs';
-    page.drawText(footer, { x: margin, y: 24, size: 10, font: regular, color: gray });
+    page.drawText(footer, { x: margin, y: 24, size: 10, font: regularFont, color: gray });
 
     const bytes = await pdf.save();
     const filename = `${sanitizeFilename(data.name || name)}-appraisal.pdf`;
@@ -145,6 +147,7 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
     return res.status(200).send(Buffer.from(bytes));
   } catch (e) {
+    console.error('PDF error', e);
     return res.status(500).json({ error: 'failed to generate pdf', details: e?.message || String(e) });
   }
 }

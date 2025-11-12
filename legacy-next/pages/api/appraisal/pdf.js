@@ -1,7 +1,16 @@
-import { PDFDocument, StandardFonts, rgb, grayscale } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, grayscale, degrees } from 'pdf-lib';
 
 function fmtUsd(n) {
   try { return `$${Number(n).toLocaleString('en-US')}`; } catch { return `$${n}`; }
+}
+
+function formatDate(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch {
+    return String(iso || '');
+  }
 }
 
 function sanitizeFilename(name) {
@@ -26,6 +35,306 @@ function wrapText(text, font, size, maxWidth) {
   return lines;
 }
 
+// Draw wrapped text to the page and return the updated y-coordinate.
+function drawWrappedText(page, text, { x, y, maxWidth, lineHeight, font, size = 11, color = rgb(0.1,0.1,0.1) }) {
+  const lines = wrapText(text, font, size, maxWidth);
+  for (const ln of lines) {
+    page.drawText(ln, { x, y: y - size, size, font, color });
+    y -= (size + (lineHeight ?? 4));
+  }
+  return y;
+}
+
+async function tryLoadLogo(pdf, baseUrl) {
+  const candidates = ['/logo.png', '/lovepass.png', '/lovepass-logo.png', '/images/logo.png', '/img/logo.png', '/logo.jpg', '/lovepass-logo.jpg'];
+  for (const path of candidates) {
+    try {
+      const r = await fetch(`${baseUrl}${path}`);
+      if (!r.ok) continue;
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      const ct = r.headers.get('content-type') || '';
+      try {
+        if (ct.includes('png')) return await pdf.embedPng(bytes);
+        if (ct.includes('jpg') || ct.includes('jpeg')) return await pdf.embedJpg(bytes);
+        // Try PNG by default
+        return await pdf.embedPng(bytes);
+      } catch {}
+    } catch {}
+  }
+  return null; // fallback to text logo
+}
+
+function addHeader(page, fonts, header, dims, logoImage) {
+  const { width, height, margin } = dims;
+  const yTop = height - margin;
+  const bigTitle = 'ETHEREUM DOMAIN APPRAISAL REPORT';
+  const subFor = `FOR ${(header?.ensName || '').toUpperCase()}`;
+  const subBy = 'BY LOVEPASS LABS LLC';
+  const metaRight = `Report ID: ${header?.reportId || ''}\nDate: ${formatDate(header?.generatedAtIso)}`;
+
+  // Centered logo if available
+  let cursorY = yTop;
+  if (logoImage) {
+    const targetW = 150;
+    const scale = targetW / logoImage.width;
+    const w = targetW;
+    const h = logoImage.height * scale;
+    page.drawImage(logoImage, { x: (width - w) / 2, y: cursorY - h, width: w, height: h });
+    cursorY -= (h + 6);
+  } else {
+    // Fallback brand text
+    const brand = 'Lovepass';
+    const bSize = 14;
+    const bw = fonts.bold.widthOfTextAtSize(brand, bSize);
+    page.drawText(brand, { x: (width - bw) / 2, y: cursorY - bSize, size: bSize, font: fonts.bold, color: rgb(0.1,0.1,0.1) });
+    cursorY -= (bSize + 6);
+  }
+
+  const titleSize = 18;
+  const titleW = fonts.bold.widthOfTextAtSize(bigTitle, titleSize);
+  page.drawText(bigTitle, { x: (width - titleW) / 2, y: cursorY - 20, size: titleSize, font: fonts.bold, color: rgb(0,0,0) });
+  cursorY -= 28;
+
+  const subSize = 10;
+  const subForW = fonts.bold.widthOfTextAtSize(subFor, subSize);
+  page.drawText(subFor, { x: (width - subForW) / 2, y: cursorY - 12, size: subSize, font: fonts.bold, color: rgb(0.15,0.15,0.15) });
+  cursorY -= 18;
+  const subByW = fonts.regular.widthOfTextAtSize(subBy, subSize);
+  page.drawText(subBy, { x: (width - subByW) / 2, y: cursorY - 12, size: subSize, font: fonts.regular, color: rgb(0.2,0.2,0.2) });
+  cursorY -= 18;
+
+  const metaSize = 10;
+  const lines = String(metaRight).split('\n');
+  const metaW = Math.max(...lines.map(l => fonts.regular.widthOfTextAtSize(l, metaSize)));
+  let metaY = yTop - 14;
+  for (const l of lines) {
+    page.drawText(l, { x: width - margin - metaW, y: metaY, size: metaSize, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
+    metaY -= 14;
+  }
+
+  return cursorY - 6;
+}
+
+function addHeadline(page, fonts, header, headline, dims) {
+  const { width, margin } = dims;
+  let y = dims.y;
+
+  const blockTitle = 'KEY FACTS';
+  page.drawText(blockTitle, { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 22;
+
+  const labelSize = 11;
+  const valSize = 12;
+  const lineGap = 10;
+  const rows = [
+    ['Domain', header.ensName || ''],
+    ['Network', header.networkLabel || ''],
+    ['Estimated Value', fmtUsd(headline.estimatedUsd)],
+    ['Range', `${fmtUsd(headline.rangeLowUsd)} – ${fmtUsd(headline.rangeHighUsd)}`],
+    ['Confidence', String(headline.confidenceLabel || '')]
+  ];
+  const colX = margin + 150;
+  for (const [k,v] of rows) {
+    page.drawText(`${k}:`, { x: margin, y: y - labelSize, size: labelSize, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
+    page.drawText(v, { x: colX, y: y - valSize, size: valSize, font: fonts.bold, color: rgb(0,0,0) });
+    y -= valSize + lineGap;
+  }
+
+  const bandLine = `Band: ${headline.bandName || ''}`;
+  page.drawText(bandLine, { x: margin, y: y - 12, size: 12, font: fonts.regular, color: rgb(0.2,0.2,0.2) });
+  y -= 18;
+
+  return y;
+}
+
+function addQuickFacts(page, fonts, report, dims, y) {
+  const { width, margin } = dims;
+  page.drawText('QUICK FACTS', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 20;
+  const band = String(report?.headline?.bandName || '').toLowerCase();
+  const liquidity = band.includes('blue') || band.includes('premium') ? 'High liquidity'
+    : band.includes('solid') ? 'Moderate liquidity'
+    : band.includes('speculative') ? 'Speculative liquidity'
+    : band ? 'Low liquidity' : 'Not available yet';
+  const facts = [
+    ['Expiration', 'N/A'],
+    ['Last Sale', report?.lastSale?.description || 'Not available yet'],
+    ['Liquidity Profile', liquidity],
+    ['Valuation Tier', report?.headline?.bandName || 'Not available yet']
+  ];
+  const colX = margin + 180;
+  for (const [k,v] of facts) {
+    page.drawText(`${k}:`, { x: margin, y: y - 11, size: 11, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
+    page.drawText(String(v), { x: colX, y: y - 12, size: 12, font: fonts.regular, color: rgb(0.1,0.1,0.1) });
+    y -= 18;
+  }
+  return y;
+}
+
+function addExecutiveSummary(page, fonts, summary, dims, y) {
+  const { width, margin } = dims;
+  page.drawText('EXECUTIVE SUMMARY', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 20;
+  y = drawWrappedText(page, String(summary || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 11 });
+  return y;
+}
+
+function addWatermark(page, fonts, text, dims) {
+  const { width } = dims;
+  const y = 100;
+  const mark = String(text || '').toUpperCase();
+  const size = 26;
+  const w = fonts.bold.widthOfTextAtSize(mark, size);
+  page.drawText(mark, { x: (width - w) / 2, y, size, font: fonts.bold, color: grayscale(0.85) });
+}
+
+function addFooter(page, fonts, header, name, net, pageNumber, pageTotal, dims) {
+  const { width, margin } = dims;
+  const y = 26; // baseline
+  const left = 'Powered by Lovepass Labs LLC';
+  const center = `https://lovepass.io/appraisal?name=${encodeURIComponent(name || '')}&net=${encodeURIComponent(net || '')}`;
+  const right = `Page ${pageNumber} / ${pageTotal}`;
+  page.drawText(left, { x: margin, y, size: 10, font: fonts.regular, color: grayscale(0.6) });
+  const centerW = fonts.regular.widthOfTextAtSize(center, 10);
+  page.drawText(center, { x: (width - centerW) / 2, y, size: 10, font: fonts.regular, color: grayscale(0.6) });
+  const rightW = fonts.regular.widthOfTextAtSize(right, 10);
+  page.drawText(right, { x: width - margin - rightW, y, size: 10, font: fonts.regular, color: grayscale(0.6) });
+}
+
+function addBorderText(page, fonts, ensName, dims) {
+  const { width, height, margin } = dims;
+  const size = 8;
+  const color = grayscale(0.75);
+  const unit = String(ensName || '').trim() || 'ens.name';
+  const token = `${unit} • `;
+  function repeatToWidth(targetW) {
+    let s = token;
+    let w = fonts.regular.widthOfTextAtSize(s, size);
+    while (w < targetW * 1.2) { s += token; w = fonts.regular.widthOfTextAtSize(s, size); }
+    return s;
+  }
+  const topStr = repeatToWidth(width - margin * 2);
+  page.drawText(topStr, { x: margin, y: height - margin + 4, size, font: fonts.regular, color });
+  const bottomStr = repeatToWidth(width - margin * 2);
+  page.drawText(bottomStr, { x: margin, y: margin - 14, size, font: fonts.regular, color });
+  const sideStr = repeatToWidth(height - margin * 2);
+  // Left side (bottom-to-top)
+  page.drawText(sideStr, { x: margin - 10, y: margin, size, font: fonts.regular, color, rotate: degrees(90) });
+  // Right side (top-to-bottom)
+  page.drawText(sideStr, { x: width - margin + 10, y: height - margin, size, font: fonts.regular, color, rotate: degrees(-90) });
+}
+
+function addScorecard(ctx) {
+  const { pdf, pageRef, fonts, metrics, dims, name, net, header, pageNumber } = ctx;
+  let { page, y } = pageRef;
+  const { margin, width, height } = dims;
+
+  const title = 'Scorecard:';
+  page.drawText(title, { x: margin, y: y - 16, size: 16, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 24;
+
+  const lineGap = 6;
+  for (const m of metrics) {
+    // First line: bold label — regular score
+    const label = `${m.label}: `;
+    const size1 = 12;
+    const labelW = fonts.bold.widthOfTextAtSize(label, size1);
+    page.drawText(label, { x: margin, y: y - size1, size: size1, font: fonts.bold, color: rgb(0,0,0) });
+    page.drawText(`${m.score}/100`, { x: margin + labelW, y: y - size1, size: size1, font: fonts.regular, color: rgb(0.15,0.15,0.15) });
+    y -= size1 + 2;
+
+    // Note (wrapped)
+    const beforeY = y;
+    y = drawWrappedText(page, m.note || '', { x: margin, y, maxWidth: width - margin * 2, lineHeight: 4, font: fonts.regular, size: 11 });
+    y -= lineGap;
+
+    // Pagination if needed before next metric
+    if (y < margin + 80) {
+      pageNumber.value += 1;
+      page = pdf.addPage([width, height]);
+      pageRef.page = page;
+      y = height - margin;
+      page.drawText('Scorecard (cont.)', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+      y -= 22;
+    }
+  }
+  pageRef.y = y;
+}
+
+function addLegalDisclaimer(ctx) {
+  const { pageRef, fonts, dims } = ctx;
+  let { page, y } = pageRef;
+  const { margin, width } = dims;
+  page.drawText('Legal Disclaimer:', { x: margin, y: y - 16, size: 16, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 22;
+  const text = 'This report expresses an algorithmic appraisal opinion generated by the Lovepass Appraisal Engine using on-chain data and comparable market behavior. It is for informational purposes only and does not constitute financial, investment, or legal advice.';
+  y = drawWrappedText(page, text, { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 10 });
+  pageRef.y = y;
+}
+
+function addComps(ctx) {
+  const { pdf, pageRef, fonts, lastSale, comps, dims, name, net, header, pageNumber } = ctx;
+  let { page, y } = pageRef;
+  const { margin, width, height } = dims;
+
+  page.drawText('Historical ENS Sales:', { x: margin, y: y - 16, size: 16, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 22;
+  const hsText = lastSale?.known
+    ? (lastSale.description || 'Recorded onchain sale.')
+    : (lastSale?.description || 'No onchain sale data available.');
+  y = drawWrappedText(page, hsText, { x: margin, y, maxWidth: width - margin * 2, lineHeight: 4, font: fonts.regular, size: 11 });
+  y -= 10;
+
+  if (y < margin + 80) {
+    pageNumber.value += 1;
+    page = pdf.addPage([width, height]);
+    pageRef.page = page; y = height - margin;
+  }
+
+  page.drawText('Comparable Sales (Illustrative):', { x: margin, y: y - 16, size: 16, font: fonts.bold, color: rgb(0,0,0) });
+  y -= 22;
+  for (const c of comps || []) {
+    const src = [c.source, c.year].filter(Boolean).join(' / ');
+    const line1 = `${c.domain || ''} (TLD: ${c.tld || ''}) — ${c.priceUsd ? `approx. ${fmtUsd(c.priceUsd)}` : 'price n/a'} — ${src || 'market data'}`;
+    page.drawText(line1, { x: margin, y: y - 12, size: 12, font: fonts.regular, color: rgb(0.1,0.1,0.1) });
+    y -= 16;
+    y = drawWrappedText(page, String(c.commentary || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 4, font: fonts.regular, size: 11 });
+    y -= 8;
+    if (y < margin + 80) {
+      pageNumber.value += 1;
+      page = pdf.addPage([width, height]);
+      pageRef.page = page; y = height - margin;
+      page.drawText('Comparable Sales (cont.)', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+      y -= 22;
+    }
+  }
+  pageRef.y = y;
+}
+
+function addCommentaryAndMethodology(ctx) {
+  const { pdf, pageRef, fonts, commentary, methodology, dims, name, net, header, pageNumber } = ctx;
+  let { page, y } = pageRef;
+  const { margin, width, height } = dims;
+
+  const sections = [
+    { title: 'Commentary & Considerations:', body: commentary },
+    { title: 'Methodology:', body: methodology }
+  ];
+
+  for (const s of sections) {
+    page.drawText(s.title, { x: margin, y: y - 16, size: 16, font: fonts.bold, color: rgb(0,0,0) });
+    y -= 22;
+    y = drawWrappedText(page, String(s.body || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 11 });
+    y -= 10;
+    if (y < margin + 80) {
+      pageNumber.value += 1;
+      page = pdf.addPage([width, height]);
+      pageRef.page = page; y = height - margin;
+    }
+  }
+  pageRef.y = y;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -43,101 +352,67 @@ export default async function handler(req, res) {
     const baseUrl = `${proto}://${host}`;
     const params = new URLSearchParams({ name, net });
     const apiUrl = `${baseUrl}/api/appraisal?${params.toString()}`;
-
-    const r = await fetch(apiUrl, { headers: { accept: 'application/json' } });
+    let r;
+    try {
+      r = await fetch(apiUrl, { headers: { accept: 'application/json' } });
+    } catch (e) {
+      return res.status(500).json({ error: 'upstream_appraisal_failed', details: e?.message || String(e) });
+    }
     if (!r.ok) {
-      return res.status(r.status).json({ error: 'failed to fetch appraisal', status: r.status });
+      return res.status(500).json({ error: 'upstream_appraisal_failed', details: `status ${r.status}` });
     }
     const data = await r.json();
 
+    const report = data?.report || null;
+    if (!report) {
+      return res.status(500).json({ error: 'upstream_appraisal_failed', details: 'missing report in appraisal JSON' });
+    }
+
     const pdf = await PDFDocument.create();
-    let page = pdf.addPage([612, 792]); // Letter portrait
     const regularFont = await pdf.embedFont(StandardFonts.Helvetica);
-    console.log('[pdf] embedded Helvetica regular');
     const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
-    console.log('[pdf] embedded HelveticaBold');
+    const fonts = { regular: regularFont, bold: boldFont };
 
-    const pink = rgb(0.98, 0.14, 0.62);
-    const gray = grayscale(0.6);
-
+    const width = 612; // Letter portrait width
+    const height = 792; // Letter portrait height
     const margin = 50;
-    const lineGap = 6;
-    const maxWidth = 612 - margin * 2;
-    let y = 792 - margin;
+    let page = pdf.addPage([width, height]);
+    let pageNumber = { value: 1 };
+    let y = height - margin;
+    const dims = { width, height, margin, y };
 
-    // Title
-    const title = 'Lovepass Domain Appraisal';
-    let size = 22;
-    page.drawText(title, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
-    y -= size + 16;
+    // Try to load a logo from public; fallback to text branding within addHeader
+    const logoImage = await tryLoadLogo(pdf, baseUrl).catch(() => null);
 
-    // Name + network
-    const tag = `${data.name || name} • ${(data.network || net).toUpperCase()}`;
-    size = 14;
-    page.drawText(tag, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
-    y -= size + 18;
+    // Page 1
+    y = addHeader(page, fonts, report.header, { width, height, margin }, logoImage);
+    dims.y = y;
+    y = addHeadline(page, fonts, report.header, report.headline, { width, height, margin, y });
+    y = addQuickFacts(page, fonts, report, { width, height, margin }, y);
+    y = addExecutiveSummary(page, fonts, report.commentary || '', { width, height, margin }, y);
+    addWatermark(page, fonts, report.header?.ensName || data.name || name, { width, height, margin });
 
-    // Estimated value
-    const value = `Estimated Value: ${fmtUsd(data.appraisalUsd)}`;
-    size = 28;
-    page.drawText(value, { x: margin, y: y - size, size, font: boldFont, color: pink });
-    y -= size + 14;
+    // Page 2: Scorecard, Historical Sale, Comps, Commentary & Methodology
+    pageNumber.value += 1;
+    page = pdf.addPage([width, height]);
+    y = height - margin;
+    const pageRef = { page, y };
+    const ctxBase = { pdf, pageRef, fonts, dims: { width, height, margin }, name: data.name || name, net: data.network || net, header: report.header, pageNumber };
 
-    // Confidence + score
-    const meta = `${(data.confidence || '').charAt(0).toUpperCase() + (data.confidence || '').slice(1)} confidence • ${data.score ?? '?'} / 100`;
-    size = 12;
-    page.drawText(meta, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.2,0.2,0.2) });
-    y -= size + 22;
+    addScorecard({ ...ctxBase, metrics: report.metrics || [] });
+    addComps({ ...ctxBase, lastSale: report.lastSale || {}, comps: report.comps || [] });
+    addCommentaryAndMethodology({ ...ctxBase, commentary: report.commentary || '', methodology: report.methodology || '' });
+    addLegalDisclaimer({ ...ctxBase });
+    addWatermark(pageRef.page, fonts, report.header?.ensName || data.name || name, { width, height, margin });
 
-    // Section: Why this has value
-    const h1 = 'Why This Has Value';
-    size = 16;
-    page.drawText(h1, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
-    y -= size + 10;
-
-    const signals = Array.isArray(data.signals) ? data.signals : [];
-    size = 11;
-    for (const s of signals) {
-      const lines = wrapText(`• ${s}`, regularFont, size, maxWidth);
-      for (const ln of lines) {
-        if (y - size < margin + 40) {
-          page = pdf.addPage([612, 792]);
-          y = 792 - margin;
-          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: boldFont, color: gray });
-          y -= 12 + 14;
-        }
-        page.drawText(ln, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
-        y -= size + lineGap;
-      }
+    // After all pages are created, add footers and border text with final totals
+    const pages = pdf.getPages();
+    const total = pages.length;
+    for (let i = 0; i < total; i++) {
+      const p = pages[i];
+      addFooter(p, fonts, report.header, data.name || name, data.network || net, i + 1, total, { width, height, margin });
+      addBorderText(p, fonts, report.header?.ensName || data.name || name, { width, height, margin });
     }
-
-    y -= 12;
-
-    // Section: What to do next
-    const h2 = 'What To Do Next';
-    size = 16;
-    page.drawText(h2, { x: margin, y: y - size, size, font: boldFont, color: rgb(0,0,0) });
-    y -= size + 10;
-
-    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
-    size = 11;
-    for (const s of suggestions) {
-      const lines = wrapText(`• ${s}`, regularFont, size, maxWidth);
-      for (const ln of lines) {
-        if (y - size < margin + 40) {
-          page = pdf.addPage([612, 792]);
-          y = 792 - margin;
-          page.drawText('Lovepass Domain Appraisal (cont.)', { x: margin, y: y - 12, size: 12, font: boldFont, color: gray });
-          y -= 12 + 14;
-        }
-        page.drawText(ln, { x: margin, y: y - size, size, font: regularFont, color: rgb(0.1,0.1,0.1) });
-        y -= size + lineGap;
-      }
-    }
-
-    // Footer
-    const footer = 'Powered by Lovepass Labs';
-    page.drawText(footer, { x: margin, y: 24, size: 10, font: regularFont, color: gray });
 
     const bytes = await pdf.save();
     const filename = `${sanitizeFilename(data.name || name)}-appraisal.pdf`;
@@ -148,6 +423,6 @@ export default async function handler(req, res) {
     return res.status(200).send(Buffer.from(bytes));
   } catch (e) {
     console.error('PDF error', e);
-    return res.status(500).json({ error: 'failed to generate pdf', details: e?.message || String(e) });
+    return res.status(500).json({ error: 'failed_to_generate_pdf', details: e?.message || String(e) });
   }
 }

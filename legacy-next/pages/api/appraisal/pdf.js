@@ -45,6 +45,33 @@ function drawWrappedText(page, text, { x, y, maxWidth, lineHeight, font, size = 
   return y;
 }
 
+function drawSectionTitle(page, fonts, text, dims, y, size = 16) {
+  const { margin } = dims;
+  page.drawText(text, { x: margin, y: y - size, size, font: fonts.bold, color: rgb(0,0,0) });
+  return y - (size + 8);
+}
+
+function drawLabelValueLine(page, fonts, label, value, dims, y, opts = {}) {
+  const { width, margin } = dims;
+  const labelSize = opts.labelSize ?? 11;
+  const valueSize = opts.valueSize ?? 12;
+  const colX = opts.colX ?? (margin + 150);
+  const labelColor = opts.labelColor ?? rgb(0,0,0);
+  const valueColor = opts.valueColor ?? rgb(0.1,0.1,0.1);
+  const lineGap = opts.lineGap ?? 10;
+  page.drawText(`${label}:`, { x: margin, y: y - labelSize, size: labelSize, font: fonts.bold, color: labelColor });
+  page.drawText(String(value), { x: colX, y: y - valueSize, size: valueSize, font: fonts.regular, color: valueColor });
+  return y - (valueSize + lineGap);
+}
+
+function drawLeftRightLine(page, fonts, leftText, rightText, dims, y, size = 10, color = rgb(0.25,0.25,0.25)) {
+  const { width, margin } = dims;
+  page.drawText(leftText, { x: margin, y: y - size, size, font: fonts.regular, color });
+  const rightW = fonts.regular.widthOfTextAtSize(rightText, size);
+  page.drawText(rightText, { x: width - margin - rightW, y: y - size, size, font: fonts.regular, color });
+  return y - (size + 8);
+}
+
 async function tryLoadLogo(pdf, baseUrl) {
   const candidates = ['/logo.png', '/lovepass.png', '/lovepass-logo.png', '/images/logo.png', '/img/logo.png', '/logo.jpg', '/lovepass-logo.jpg'];
   for (const path of candidates) {
@@ -70,7 +97,6 @@ function addHeader(page, fonts, header, dims, logoImage) {
   const bigTitle = 'ETHEREUM DOMAIN APPRAISAL REPORT';
   const subFor = `FOR ${(header?.ensName || '').toUpperCase()}`;
   const subBy = 'BY LOVEPASS LABS LLC';
-  const metaRight = `Report ID: ${header?.reportId || ''}\nDate: ${formatDate(header?.generatedAtIso)}`;
 
   // Centered logo if available
   let cursorY = yTop;
@@ -99,27 +125,29 @@ function addHeader(page, fonts, header, dims, logoImage) {
   const subForW = fonts.bold.widthOfTextAtSize(subFor, subSize);
   page.drawText(subFor, { x: (width - subForW) / 2, y: cursorY - 12, size: subSize, font: fonts.bold, color: rgb(0.15,0.15,0.15) });
   cursorY -= 18;
-  const subByW = fonts.regular.widthOfTextAtSize(subBy, subSize);
-  page.drawText(subBy, { x: (width - subByW) / 2, y: cursorY - 12, size: subSize, font: fonts.regular, color: rgb(0.2,0.2,0.2) });
+  const subByW = fonts.bold.widthOfTextAtSize(subBy, subSize);
+  page.drawText(subBy, { x: (width - subByW) / 2, y: cursorY - 12, size: subSize, font: fonts.bold, color: rgb(0.2,0.2,0.2) });
   cursorY -= 18;
 
-  const metaSize = 10;
-  const lines = String(metaRight).split('\n');
-  const metaW = Math.max(...lines.map(l => fonts.regular.widthOfTextAtSize(l, metaSize)));
-  let metaY = yTop - 14;
-  for (const l of lines) {
-    page.drawText(l, { x: width - margin - metaW, y: metaY, size: metaSize, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
-    metaY -= 14;
-  }
+  cursorY = drawLeftRightLine(
+    page,
+    fonts,
+    `Report ID: ${header?.reportId || ''}`,
+    `Date: ${formatDate(header?.generatedAtIso)}`,
+    { width, height, margin },
+    cursorY,
+    10,
+    rgb(0.25,0.25,0.25)
+  );
 
-  return cursorY - 6;
+  return cursorY - 2;
 }
 
 function addHeadline(page, fonts, header, headline, dims) {
   const { width, margin } = dims;
   let y = dims.y;
 
-  const blockTitle = 'KEY FACTS';
+  const blockTitle = 'Facts:';
   page.drawText(blockTitle, { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
   y -= 22;
 
@@ -135,21 +163,15 @@ function addHeadline(page, fonts, header, headline, dims) {
   ];
   const colX = margin + 150;
   for (const [k,v] of rows) {
-    page.drawText(`${k}:`, { x: margin, y: y - labelSize, size: labelSize, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
-    page.drawText(v, { x: colX, y: y - valSize, size: valSize, font: fonts.bold, color: rgb(0,0,0) });
-    y -= valSize + lineGap;
+    y = drawLabelValueLine(page, fonts, k, v, { width, height: dims.height, margin }, y, { labelSize, valueSize: valSize, colX, labelColor: rgb(0,0,0), valueColor: rgb(0.1,0.1,0.1), lineGap });
   }
-
-  const bandLine = `Band: ${headline.bandName || ''}`;
-  page.drawText(bandLine, { x: margin, y: y - 12, size: 12, font: fonts.regular, color: rgb(0.2,0.2,0.2) });
-  y -= 18;
 
   return y;
 }
 
 function addQuickFacts(page, fonts, report, dims, y) {
   const { width, margin } = dims;
-  page.drawText('QUICK FACTS', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+  page.drawText('Quick Facts:', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
   y -= 20;
   const band = String(report?.headline?.bandName || '').toLowerCase();
   const liquidity = band.includes('blue') || band.includes('premium') ? 'High liquidity'
@@ -164,16 +186,14 @@ function addQuickFacts(page, fonts, report, dims, y) {
   ];
   const colX = margin + 180;
   for (const [k,v] of facts) {
-    page.drawText(`${k}:`, { x: margin, y: y - 11, size: 11, font: fonts.regular, color: rgb(0.25,0.25,0.25) });
-    page.drawText(String(v), { x: colX, y: y - 12, size: 12, font: fonts.regular, color: rgb(0.1,0.1,0.1) });
-    y -= 18;
+    y = drawLabelValueLine(page, fonts, k, v, { width, height: dims.height, margin }, y, { labelSize: 11, valueSize: 12, colX, lineGap: 6, labelColor: rgb(0,0,0), valueColor: rgb(0.1,0.1,0.1) });
   }
   return y;
 }
 
 function addExecutiveSummary(page, fonts, summary, dims, y) {
   const { width, margin } = dims;
-  page.drawText('EXECUTIVE SUMMARY', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
+  page.drawText('Executive Summary:', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
   y -= 20;
   y = drawWrappedText(page, String(summary || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 11 });
   return y;
@@ -283,6 +303,17 @@ function addComps(ctx) {
     ? (lastSale.description || 'Recorded onchain sale.')
     : (lastSale?.description || 'No onchain sale data available.');
   y = drawWrappedText(page, hsText, { x: margin, y, maxWidth: width - margin * 2, lineHeight: 4, font: fonts.regular, size: 11 });
+  if (lastSale?.known) {
+    const details = [];
+    if (lastSale.priceUsd != null) details.push(`approx. ${fmtUsd(lastSale.priceUsd)}`);
+    const dt = lastSale.date || lastSale.iso || lastSale.timestamp;
+    if (dt) details.push(`date: ${formatDate(dt)}`);
+    if (details.length) {
+      const dline = `Details: ${details.join(' — ')}`;
+      page.drawText(dline, { x: margin, y: y - 12, size: 11, font: fonts.regular, color: rgb(0.1,0.1,0.1) });
+      y -= 16;
+    }
+  }
   y -= 10;
 
   if (y < margin + 80) {

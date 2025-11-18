@@ -101,12 +101,12 @@ function addHeader(page, fonts, header, dims, logoImage) {
   // Centered logo if available
   let cursorY = yTop;
   if (logoImage) {
-    const targetW = 150;
+    const targetW = 160;
     const scale = targetW / logoImage.width;
     const w = targetW;
     const h = logoImage.height * scale;
     page.drawImage(logoImage, { x: (width - w) / 2, y: cursorY - h, width: w, height: h });
-    cursorY -= (h + 6);
+    cursorY -= (h + 16);
   } else {
     // Fallback brand text
     const brand = 'Lovepass';
@@ -119,15 +119,15 @@ function addHeader(page, fonts, header, dims, logoImage) {
   const titleSize = 18;
   const titleW = fonts.bold.widthOfTextAtSize(bigTitle, titleSize);
   page.drawText(bigTitle, { x: (width - titleW) / 2, y: cursorY - 20, size: titleSize, font: fonts.bold, color: rgb(0,0,0) });
-  cursorY -= 28;
+  cursorY -= 32;
 
   const subSize = 10;
   const subForW = fonts.bold.widthOfTextAtSize(subFor, subSize);
   page.drawText(subFor, { x: (width - subForW) / 2, y: cursorY - 12, size: subSize, font: fonts.bold, color: rgb(0.15,0.15,0.15) });
-  cursorY -= 18;
+  cursorY -= 20;
   const subByW = fonts.bold.widthOfTextAtSize(subBy, subSize);
   page.drawText(subBy, { x: (width - subByW) / 2, y: cursorY - 12, size: subSize, font: fonts.bold, color: rgb(0.2,0.2,0.2) });
-  cursorY -= 18;
+  cursorY -= 20;
 
   cursorY = drawLeftRightLine(
     page,
@@ -184,9 +184,10 @@ function addQuickFacts(page, fonts, report, dims, y) {
     ['Liquidity Profile', liquidity],
     ['Valuation Tier', report?.headline?.bandName || 'Not available yet']
   ];
-  const colX = margin + 180;
+  const indentMargin = margin + 10;
+  const colX = margin + 190;
   for (const [k,v] of facts) {
-    y = drawLabelValueLine(page, fonts, k, v, { width, height: dims.height, margin }, y, { labelSize: 11, valueSize: 12, colX, lineGap: 6, labelColor: rgb(0,0,0), valueColor: rgb(0.1,0.1,0.1) });
+    y = drawLabelValueLine(page, fonts, k, v, { width, height: dims.height, margin: indentMargin }, y, { labelSize: 11, valueSize: 12, colX, lineGap: 6, labelColor: rgb(0,0,0), valueColor: rgb(0.1,0.1,0.1) });
   }
   return y;
 }
@@ -195,7 +196,7 @@ function addExecutiveSummary(page, fonts, summary, dims, y) {
   const { width, margin } = dims;
   page.drawText('Executive Summary:', { x: margin, y: y - 14, size: 14, font: fonts.bold, color: rgb(0,0,0) });
   y -= 20;
-  y = drawWrappedText(page, String(summary || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 11 });
+  y = drawWrappedText(page, String(summary || ''), { x: margin, y, maxWidth: width - margin * 2, lineHeight: 6, font: fonts.regular, size: 11 });
   return y;
 }
 
@@ -212,8 +213,9 @@ function addFooter(page, fonts, header, name, net, pageNumber, pageTotal, dims) 
   const { width, margin } = dims;
   const y = 26; // baseline
   const left = 'Powered by Lovepass Labs LLC';
-  const center = `https://lovepass.io/appraisal?name=${encodeURIComponent(name || '')}&net=${encodeURIComponent(net || '')}`;
-  const right = `Page ${pageNumber} / ${pageTotal}`;
+  const ens = header?.ensName || name || '';
+  const center = `https://lovepass.io/appraisal/${encodeURIComponent(ens)}`;
+  const right = `${pageNumber}/${pageTotal}`;
   page.drawText(left, { x: margin, y, size: 10, font: fonts.regular, color: grayscale(0.6) });
   const centerW = fonts.regular.widthOfTextAtSize(center, 10);
   page.drawText(center, { x: (width - centerW) / 2, y, size: 10, font: fonts.regular, color: grayscale(0.6) });
@@ -234,14 +236,14 @@ function addBorderText(page, fonts, ensName, dims) {
     return s;
   }
   const topStr = repeatToWidth(width - margin * 2);
-  page.drawText(topStr, { x: margin, y: height - margin + 4, size, font: fonts.regular, color });
+  page.drawText(topStr, { x: margin, y: height - margin - 6, size, font: fonts.regular, color });
   const bottomStr = repeatToWidth(width - margin * 2);
-  page.drawText(bottomStr, { x: margin, y: margin - 14, size, font: fonts.regular, color });
+  page.drawText(bottomStr, { x: margin, y: margin + 6, size, font: fonts.regular, color });
   const sideStr = repeatToWidth(height - margin * 2);
   // Left side (bottom-to-top)
-  page.drawText(sideStr, { x: margin - 10, y: margin, size, font: fonts.regular, color, rotate: degrees(90) });
+  page.drawText(sideStr, { x: margin + 6, y: margin, size, font: fonts.regular, color, rotate: degrees(90) });
   // Right side (top-to-bottom)
-  page.drawText(sideStr, { x: width - margin + 10, y: height - margin, size, font: fonts.regular, color, rotate: degrees(-90) });
+  page.drawText(sideStr, { x: width - margin - 6, y: height - margin, size, font: fonts.regular, color, rotate: degrees(-90) });
 }
 
 function addScorecard(ctx) {
@@ -265,7 +267,7 @@ function addScorecard(ctx) {
 
     // Note (wrapped)
     const beforeY = y;
-    y = drawWrappedText(page, m.note || '', { x: margin, y, maxWidth: width - margin * 2, lineHeight: 4, font: fonts.regular, size: 11 });
+    y = drawWrappedText(page, m.note || '', { x: margin, y, maxWidth: width - margin * 2, lineHeight: 5, font: fonts.regular, size: 11 });
     y -= lineGap;
 
     // Pagination if needed before next metric
@@ -314,7 +316,7 @@ function addComps(ctx) {
       y -= 16;
     }
   }
-  y -= 10;
+  
 
   if (y < margin + 80) {
     pageNumber.value += 1;
@@ -434,7 +436,6 @@ export default async function handler(req, res) {
     addComps({ ...ctxBase, lastSale: report.lastSale || {}, comps: report.comps || [] });
     addCommentaryAndMethodology({ ...ctxBase, commentary: report.commentary || '', methodology: report.methodology || '' });
     addLegalDisclaimer({ ...ctxBase });
-    addWatermark(pageRef.page, fonts, report.header?.ensName || data.name || name, { width, height, margin });
 
     // After all pages are created, add footers and border text with final totals
     const pages = pdf.getPages();

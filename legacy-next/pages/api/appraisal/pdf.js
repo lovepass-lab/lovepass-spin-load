@@ -224,26 +224,42 @@ function addFooter(page, fonts, header, name, net, pageNumber, pageTotal, dims) 
 }
 
 function addBorderText(page, fonts, ensName, dims) {
-  const { width, height, margin } = dims;
-  const size = 8;
-  const color = grayscale(0.75);
-  const unit = String(ensName || '').trim() || 'ens.name';
+  const { width, height } = dims;
+  const borderMargin = 28;
+  const size = 7;
+  const unit = (String(ensName || '').trim() || 'ens.name').toUpperCase();
   const token = `${unit} • `;
-  function repeatToWidth(targetW) {
-    let s = token;
-    let w = fonts.regular.widthOfTextAtSize(s, size);
-    while (w < targetW * 1.2) { s += token; w = fonts.regular.widthOfTextAtSize(s, size); }
-    return s;
+  const tokenW = fonts.regular.widthOfTextAtSize(token, size);
+  const color = rgb(0,0,0);
+  const opacity = 0.18;
+
+  let x = borderMargin;
+  const yTop = height - borderMargin;
+  while (x + tokenW <= width - borderMargin) {
+    page.drawText(token, { x, y: yTop, size, font: fonts.regular, color, opacity });
+    x += tokenW;
   }
-  const topStr = repeatToWidth(width - margin * 2);
-  page.drawText(topStr, { x: margin, y: height - margin - 6, size, font: fonts.regular, color });
-  const bottomStr = repeatToWidth(width - margin * 2);
-  page.drawText(bottomStr, { x: margin, y: margin + 6, size, font: fonts.regular, color });
-  const sideStr = repeatToWidth(height - margin * 2);
-  // Left side (bottom-to-top)
-  page.drawText(sideStr, { x: margin + 6, y: margin, size, font: fonts.regular, color, rotate: degrees(90) });
-  // Right side (top-to-bottom)
-  page.drawText(sideStr, { x: width - margin - 6, y: height - margin, size, font: fonts.regular, color, rotate: degrees(-90) });
+
+  x = borderMargin;
+  const yBottom = borderMargin;
+  while (x + tokenW <= width - borderMargin) {
+    page.drawText(token, { x, y: yBottom, size, font: fonts.regular, color, opacity });
+    x += tokenW;
+  }
+
+  let y = borderMargin;
+  const xLeft = borderMargin;
+  while (y + tokenW <= height - borderMargin) {
+    page.drawText(token, { x: xLeft, y, size, font: fonts.regular, color, opacity, rotate: degrees(90) });
+    y += tokenW;
+  }
+
+  y = height - borderMargin;
+  const xRight = width - borderMargin;
+  while (y - tokenW >= borderMargin) {
+    page.drawText(token, { x: xRight, y, size, font: fonts.regular, color, opacity, rotate: degrees(-90) });
+    y -= tokenW;
+  }
 }
 
 function addScorecard(ctx) {
@@ -423,7 +439,6 @@ export default async function handler(req, res) {
     y = addHeadline(page, fonts, report.header, report.headline, { width, height, margin, y });
     y = addQuickFacts(page, fonts, report, { width, height, margin }, y);
     y = addExecutiveSummary(page, fonts, report.commentary || '', { width, height, margin }, y);
-    addWatermark(page, fonts, report.header?.ensName || data.name || name, { width, height, margin });
 
     // Page 2: Scorecard, Historical Sale, Comps, Commentary & Methodology
     pageNumber.value += 1;

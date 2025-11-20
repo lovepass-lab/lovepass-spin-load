@@ -164,6 +164,24 @@ function defaultTextV2(name, score, isMainnet, meta) {
   return { signals, suggestions };
 }
 
+async function getAiNarrative(params) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  const openai = new OpenAI({ apiKey });
+  const { name, network, score, appraisalUsd, rangeLowUsd, rangeHighUsd, bandName, metrics } = params;
+  const payload = { name, network, score, appraisalUsd, rangeLowUsd, rangeHighUsd, bandName, metrics };
+  const r = await openai.chat.completions.create({
+    model: 'gpt-4.1-mini',
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: 'You are an ENS domain appraisal engine for Lovepass Labs. Output STRICT JSON only with keys: executiveSummary, scorecardNotes, comps, commentary, methodology. Each scorecardNotes value is a single sentence. Comps are illustrative and safe.' },
+      { role: 'user', content: JSON.stringify(payload) }
+    ]
+  });
+  const content = r?.choices?.[0]?.message?.content || '{}';
+  try { return JSON.parse(content); } catch { return null; }
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -259,61 +277,63 @@ export default async function handler(req, res) {
       methodology
     };
 
-    // Default text (no AI)
     let { signals, suggestions } = defaultTextV2(name, score, isMainnet, meta);
     let source = 'lovepass-appraisal-v2-fallback';
-
-    // Optional AI: generate human-readable text only (keep numbers deterministic)
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) {
-      try {
-        const openai = new OpenAI({ apiKey });
-        const payload = {
-          name,
-          network: networkStr,
-          score,
-          appraisalUsd: usd,
-          bandName: band.bandName,
-          rangeLowUsd,
-          rangeHighUsd,
-          headerNetworkLabel: networkLabel,
-          metrics: metrics.map(m => ({ label: m.label, score: m.score })),
-          hasDigits: meta.hasDigits,
-          hasHyphen: meta.hasHyphen,
-          isShortWord: meta.len <= 6,
-          lengthCategory: meta.len <= 3 ? 'very_short' : meta.len <= 4 ? 'short' : meta.len <= 6 ? 'medium' : meta.len <= 10 ? 'long' : 'very_long',
-          networkBonusApplied: isMainnet,
-        };
-        const r = await openai.chat.completions.create({
-          model: 'gpt-4.1-mini',
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: 'You are a domain appraisal explainer. You receive structured numeric data and must ONLY produce human-readable text fields. You are not allowed to change any numeric value. Respond with JSON {"signals": string[], "suggestions": string[], "commentary": string, "methodology": string, "metricsNotes": string[]}.' },
-            { role: 'user', content: JSON.stringify(payload) }
-          ]
-        });
-        const content = r?.choices?.[0]?.message?.content || '{}';
-        const obj = JSON.parse(content);
-        if (Array.isArray(obj?.signals) && Array.isArray(obj?.suggestions)) {
-          signals = obj.signals.map(String);
-          suggestions = obj.suggestions.map(String);
-          if (typeof obj.commentary === 'string' && obj.commentary.trim()) {
-            report.commentary = obj.commentary.trim();
-          }
-          if (typeof obj.methodology === 'string' && obj.methodology.trim()) {
-            report.methodology = obj.methodology.trim();
-          }
-          if (Array.isArray(obj.metricsNotes) && obj.metricsNotes.length === metrics.length) {
-            for (let i = 0; i < metrics.length; i++) {
-              if (typeof obj.metricsNotes[i] === 'string') metrics[i].note = obj.metricsNotes[i];
-            }
-          }
-          source = 'lovepass-appraisal-v2-ai';
+    try {
+      const ai = await getAiNarrative({
+        name,
+        network: networkStr,
+        score,
+        appraisalUsd: usd,
+        rangeLowUsd,
+        rangeHighUsd,
+        bandName: band.bandName,
+        metrics: metrics.map(m => ({ label: m.label, score: m.score }))
+      });
+      if (ai) {
+        if (typeof ai.executiveSummary === 'string' && ai.executiveSummary.trim()) {
+          report.executiveSummary = ai.executiveSummary.trim();
+          report.commentary = ai.executiveSummary.trim();
         }
-      } catch (e) {
-        // fall back silently
+        if (ai.scorecardNotes && typeof ai.scorecardNotes === 'object') {
+          const notes = ai.scorecardNotes;
+          const map = {
+            'Length & Simplicity': 'lengthSimplicity',
+            'Memorability & Brandability': 'memorabilityBrandability',
+            'Commercial Scope': 'commercialScope',
+            'Liquidity / Buyer Pool': 'liquidityBuyerPool',
+            'Extension & Network': 'extensionNetwork'
+          };
+          for (const m of metrics) {
+            const key = map[m.label] || '';
+            if (key && typeof notes[key] === 'string') m.note = notes[key];
+          }
+          const scorecard = {
+            lengthSimplicity: { score: metrics[0]?.score ?? 0, note: notes.lengthSimplicity || '' },
+            memorabilityBrandability: { score: metrics[1]?.score ?? 0, note: notes.memorabilityBrandability || '' },
+            commercialScope: { score: metrics[2]?.score ?? 0, note: notes.commercialScope || '' },
+            liquidityBuyerPool: { score: metrics[3]?.score ?? 0, note: notes.liquidityBuyerPool || '' },
+            extensionNetwork: { score: metrics[4]?.score ?? 0, note: notes.extensionNetwork || '' },
+            overallNote: typeof notes.overallNote === 'string' ? notes.overallNote : ''
+          };
+          report.scorecard = scorecard;
+        }
+        if (Array.isArray(ai.comps) && ai.comps.length) {
+          const mapped = ai.comps.map(c => ({
+            domain: String(c.domain || c.label || '').split(' ')[0] || '',
+            tld: c.tld || 'eth',
+            priceUsd: c.priceUsd != null ? Math.round(Number(c.priceUsd)) : (c.approxPriceUsd != null ? Math.round(Number(c.approxPriceUsd)) : undefined),
+            source: c.source || 'illustrative',
+            year: c.year != null ? Number(c.year) : undefined,
+            commentary: c.note || c.commentary || ''
+          }));
+          report.comps = mapped;
+        }
+        if (typeof ai.commentary === 'string' && ai.commentary.trim()) report.commentary = ai.commentary.trim();
+        if (typeof ai.methodology === 'string' && ai.methodology.trim()) report.methodology = ai.methodology.trim();
+        source = 'lovepass-appraisal-v2-ai';
       }
-    }
+    } catch {}
 
     res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=60");
     return res.status(200).json({
@@ -325,6 +345,11 @@ export default async function handler(req, res) {
       signals,
       suggestions,
       source,
+      executiveSummary: report.executiveSummary || report.commentary,
+      scorecard: report.scorecard || null,
+      comps: report.comps || [],
+      commentary: report.commentary,
+      methodology: report.methodology,
       report
     });
   } catch (e) {
